@@ -292,7 +292,11 @@ module AWS
 
         max_workers = @options.execution_workers if @options
         max_workers = 20 if (max_workers.nil? || max_workers.zero?)
-        @executor = ForkingExecutor.new(
+        # @executor = ForkingExecutor.new(
+        #   :max_workers => max_workers,
+        #   :logger => @logger
+        # )
+        @executor = ThreadingExecutor.new(
           :max_workers => max_workers,
           :logger => @logger
         )

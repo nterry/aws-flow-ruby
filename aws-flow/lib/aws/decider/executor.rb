@@ -178,5 +178,103 @@ module AWS
       end
     end
 
+    # @api private
+    class ThreadingExecutor
+
+      attr_accessor :max_workers, :threads, :is_shutdown
+
+      def initialize(options = {})
+        unless @log = options[:logger]
+          @log = Utilities::LogFactory.make_logger(self)
+        end
+        @max_workers = options[:max_workers] || 1
+        @threads = []
+        @is_shutdown = false
+      end
+
+      # TODO: Need to support max_workers
+      def execute(&block)
+        @log.debug "Creating a new child thread: parent=main"
+        t = Thread.new {
+          Thread.current[:id] = Random.new(Time.now.to_i).rand(9999999999999999)
+          begin
+            @log.debug "Executing block from child process: parent=main, child_thread=#{Thread.current[:id]}"
+            block.call
+          rescue => e
+            @log.error "child_thread #{Thread.current[:id]} failed while executing the task: #{e}. Exiting: parent=main, child_pid=#{Thread.current[:id]}"
+          end
+        }
+        threads << t
+      end
+
+      def shutdown(timeout_seconds)
+        @log.debug "Shutdown requested. Currently running threads: #{running_threads}"
+        @is_shutdown = true
+
+        unless threads.empty?
+          # If the timeout_seconds value is set to Float::INFINITY, it will wait
+          # indefinitely till all workers finish their work. This allows us to
+          # handle graceful shutdown of workers.
+          if timeout_seconds == Float::INFINITY
+            @log.info "Exit requested, waiting indefinitely till all child threads finish"
+            remove_completed_threads while !threads.empty?
+          else
+            @log.info "Exit requested, waiting up to #{timeout_seconds} seconds for child threads to finish"
+            # check every second for child processes to finish
+            timeout_seconds.times do
+              sleep 1
+              remove_completed_threads
+              break if threads.empty?
+            end
+          end
+
+          # forcibly kill all remaining child threads
+          @log.warn "Child threads #{running_threads} still running, sending KILL signal"
+          threads.each { |t| t.terminate! }
+        end
+      end
+
+      def shutdown!
+        @log.warn "Requested forced shutdown. Killing all child threads"
+        threads.each { |t| t.terminate! }
+      end
+
+      # @api private
+      def block_on_max_workers
+      end
+
+
+      private
+
+      def remove_completed_threads
+        @log.debug "Removing completed child threads"
+
+        if threads.empty?
+          @log.debug "No child threads. Returning."
+          return
+        end
+
+        @log.debug "Current child threads: #{running_threads}"
+
+        # iterate thread pool for eligible threads and store them
+        to_delete = []
+        threads.each do |thread|
+          to_delete << thread if thread.status == nil || thread.status == false
+        end
+
+        @log.debug "Threads #{to_delete*', '} are ready for deletion"
+
+        # remove reference to deletion-eligible threads
+        to_delete.each do |t|
+          threads.delete t
+        end
+      end
+
+
+      def running_threads
+        # returns "1, 2, 3, ..., n"
+        threads*", "
+      end
+    end
   end
 end

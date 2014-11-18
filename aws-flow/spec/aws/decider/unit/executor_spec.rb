@@ -100,7 +100,7 @@ describe ForkingExecutor do
       end
     end
     context "with block=true" do
-      it "should wait for atleast one child process to become available and then reap as many as possible" do
+      it "should wait for at least one child process to become available and then reap as many as possible" do
 
         # stub out Process.waitpid2 to return only 2 processes
         allow(Process).to receive(:waitpid2).and_return([1, Status.new], [2, Status.new], nil)
@@ -118,6 +118,66 @@ describe ForkingExecutor do
         # reap as many as possible
         executor.pids.size.should == 1
       end
+    end
+  end
+end
+
+describe ThreadingExecutor do
+
+  before (:each) do
+    logger_mock = double("logger").as_null_object
+    random_mock = double("random")
+    random_mock.stub(:rand).and_return(987654321)
+
+    allow(Utilities::LogFactory).to receive(:make_logger).and_return(logger_mock)
+    allow(Time).to receive(:now).and_return(123456)
+    allow(Random).to receive(:new).and_return(random_mock)
+  end
+
+  def test_model(options={})
+    AWS::Flow::ThreadingExecutor.new(options)
+  end
+
+  context "#execute" do
+
+    it "should create a new thread and add the thread into the thread pool" do
+      t_model = test_model
+      mock_thread = double("thread")
+      expect(Thread).to receive(:new).and_return(mock_thread)
+      t_model.execute()
+      expect(t_model.threads).to eq([ mock_thread ])
+    end
+
+    it "should call the given block inside the thread" do
+      t_model = test_model
+      blk = lambda{}
+
+      expect(blk).to receive(:call)
+      t_model.execute(&blk)
+    end
+  end
+
+  context "#shutdown" do
+
+    def running_thread
+      double("running", :status => "run")
+    end
+
+    def completed_thread
+      double("completed", :status => false)
+    end
+
+    def failed_thread
+      double("failed", :status => nil)
+    end
+
+    it "should try for exactly n tries to terminate gracefully if given a timeout and the list of threads is greater than the timeout" do
+      thread_pool = [ running_thread, running_thread, completed_thread, failed_thread ]
+      t_model = test_model
+      t_model.threads = thread_pool
+
+      expect(Kernel).to receive(:sleep).twice
+      t_model.shutdown(2)
     end
   end
 end
